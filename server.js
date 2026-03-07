@@ -4,7 +4,7 @@ const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path'); // Faltava este
-const { exec } = require('child_process'); // Faltava este
+
 
 const app = express();
 const server = http.createServer(app);
@@ -12,6 +12,7 @@ const io = new Server(server, { cors: { origin: "*" } });
 
 app.use(cors());
 app.use(express.json());
+
 
 // CONFIGURAÇÃO DO BANCO (ANGOMONEY na Render)
 const pool = new Pool({
@@ -110,7 +111,7 @@ app.post('/transferir', async (req, res) => {
 app.post('/auth/cadastro', async (req, res) => {
     const { nome, telefone, senha } = req.body;
     try {
-      const query = 'INSERT INTO usuarios (nome_completo, telefone, senha, saldo_usd) VALUES ($1, $2, $3, 100) RETURNING *';
+      const query = 'INSERT INTO usuarios (nome_completo, telefone, senha, saldo_usd) VALUES ($1, $2, $3,2 ) RETURNING *';
       const result = await pool.query(query, [nome, telefone, senha]);
       res.status(201).json({ success: true, usuario: result.rows[0] });
     } catch (err) { res.status(400).json({ error: 'Erro no cadastro.' }); }
@@ -440,14 +441,7 @@ app.post('/resgatar-investimento', async (req, res) => {
 
 // --- INICIALIZAÇÃO ---
 
-const PORTA = 3000;
-server.listen(PORTA, () => {
-    console.log(`🚀 KWANZA NEXUS Real-time na porta ${PORTA}`);
-    
-    const caminhoArquivo = path.join(__dirname, 'index.html');
-    const comando = process.platform === 'win32' ? `start "" "${caminhoArquivo}"` : `open "${caminhoArquivo}"`;
-    
-    exec(comando, (err) => {
-        if (!err) console.log("🌐 Interface aberta automaticamente.");
-    });
+const PORTA = process.env.PORT || 3000;
+server.listen(PORTA, '0.0.0.0', () => {
+    console.log(`🚀 API KWANZA NEXUS na Render ativa!`);
 });
