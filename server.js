@@ -64,11 +64,29 @@ criarTabelasSeNaoExistirem();
 
 app.post('/auth/cadastro', async (req, res) => {
     const { nome, telefone, senha } = req.body;
+    
     try {
-      const query = 'INSERT INTO usuarios (nome_completo, telefone, senha, saldo_usd) VALUES ($1, $2, $3, 2) RETURNING *';
-      const result = await pool.query(query, [nome, telefone, senha]);
-      res.status(201).json({ success: true, usuario: result.rows[0] });
-    } catch (err) { res.status(400).json({ error: 'Erro no cadastro.' }); }
+        // 1. PRIMEIRO: Verificamos se o número já existe
+        const checkUser = await pool.query('SELECT id FROM usuarios WHERE telefone = $1', [telefone]);
+        
+        if (checkUser.rows.length > 0) {
+            // Se encontrar alguém, paramos aqui e avisamos
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Este número já está registado' 
+            });
+        }
+
+        // 2. SE NÃO EXISTIR: Aí sim fazemos o cadastro
+        const query = 'INSERT INTO usuarios (nome_completo, telefone, senha, saldo_usd) VALUES ($1, $2, $3, 2) RETURNING *';
+        const result = await pool.query(query, [nome, telefone, senha]);
+        
+        res.status(201).json({ success: true, usuario: result.rows[0] });
+
+    } catch (err) {
+        console.error("Erro no processo:", err.message);
+        res.status(500).json({ success: false, error: 'Erro ao processar o cadastro.' });
+    }
 });
 
 app.post('/auth/login', async (req, res) => {
