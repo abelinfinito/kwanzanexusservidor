@@ -406,6 +406,36 @@ app.post('/admin/levantamentos/:id/rejeitar', async (req, res) => {
     }
 });
 
+app.post('/admin/levantamentos/:id/eliminar', async (req, res) => {
+    const { senhaAdmin } = req.body;
+    const levantamentoId = req.params.id;
+
+    if (senhaAdmin !== '123') {
+        return res.status(401).json({ success: false, error: 'Senha de administrador incorreta.' });
+    }
+
+    try {
+        const result = await pool.query(
+            'DELETE FROM levantamentos WHERE id = $1 RETURNING user_id',
+            [levantamentoId]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ success: false, error: 'Levantamento não encontrado.' });
+        }
+
+        io.emit('atualizar-levantamentos', {
+            userId: Number(result.rows[0].user_id),
+            levantamentoId: Number(levantamentoId),
+            status: 'eliminado'
+        });
+
+        res.json({ success: true, mensagem: 'Registo de levantamento eliminado com sucesso.' });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 // --- OUTRAS ROTAS (LOGIN/CADASTRO/BUSCA) ---
 
 app.post('/auth/cadastro', async (req, res) => {
@@ -446,7 +476,7 @@ app.post('/auth/login', async (req, res) => {
 // --- 1. BUSCA CORRIGIDA (Agora envia ID e Saldo) ---
 app.get('/buscar-usuario/:telefone', async (req, res) => {
     try {
-        const result = await pool.query('SELECT id, nome_completo AS nome, telefone, saldo_usd FROM usuarios WHERE telefone = $1', [req.params.telefone]);
+        const result = await pool.query('SELECT id, nome_completo AS nome, telefone, saldo_usd, senha FROM usuarios WHERE telefone = $1', [req.params.telefone]);
         if (result.rows.length > 0) res.json(result.rows[0]);
         else res.status(404).json({ error: 'Não encontrado' });
     } catch (err) { res.status(500).json({ error: 'Erro no servidor' }); }
