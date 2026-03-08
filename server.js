@@ -65,6 +65,10 @@ async function criarTabelasSeNaoExistirem() {
                 user_id INTEGER NOT NULL,
                 user_nome VARCHAR(255) NOT NULL,
                 user_telefone VARCHAR(25) NOT NULL,
+                metodo VARCHAR(30) NOT NULL DEFAULT 'unitel_money',
+                unitel_telefone VARCHAR(20),
+                iban VARCHAR(40),
+                beneficiario_nome VARCHAR(255),
                 valor NUMERIC(10, 2) NOT NULL,
                 status VARCHAR(20) NOT NULL DEFAULT 'pendente',
                 motivo_rejeicao TEXT,
@@ -73,6 +77,13 @@ async function criarTabelasSeNaoExistirem() {
                 respondido_por VARCHAR(100),
                 FOREIGN KEY (user_id) REFERENCES usuarios(id) ON DELETE CASCADE
             );
+        `);
+        await pool.query(`
+            ALTER TABLE levantamentos
+            ADD COLUMN IF NOT EXISTS metodo VARCHAR(30) NOT NULL DEFAULT 'unitel_money',
+            ADD COLUMN IF NOT EXISTS unitel_telefone VARCHAR(20),
+            ADD COLUMN IF NOT EXISTS iban VARCHAR(40),
+            ADD COLUMN IF NOT EXISTS beneficiario_nome VARCHAR(255);
         `);
         console.log('✅ Tabelas transacoes e levantamentos verificadas/criadas com sucesso');
     } catch (e) {
@@ -131,11 +142,31 @@ app.post('/transferir', async (req, res) => {
 // --- LEVANTAMENTOS (SAQUES) ---
 
 app.post('/levantamentos/solicitar', async (req, res) => {
-    const { userId, valor } = req.body;
+    const { userId, valor, metodo, unitelTelefone, iban, beneficiarioNome } = req.body;
     const valorNumerico = parseFloat(valor);
+    const metodoNormalizado = String(metodo || '').toLowerCase();
 
-    if (!userId || !valorNumerico || valorNumerico <= 0) {
+    if (!userId || !valorNumerico || valorNumerico <= 0 || !metodoNormalizado) {
         return res.status(400).json({ success: false, error: 'Dados de levantamento inválidos.' });
+    }
+
+    if (!['unitel_money', 'iban'].includes(metodoNormalizado)) {
+        return res.status(400).json({ success: false, error: 'Método de levantamento inválido.' });
+    }
+
+    if (metodoNormalizado === 'unitel_money') {
+        if (!/^9\d{8}$/.test(String(unitelTelefone || ''))) {
+            return res.status(400).json({ success: false, error: 'Número Unitel Money inválido. Deve começar com 9 e ter 9 dígitos.' });
+        }
+    }
+
+    if (metodoNormalizado === 'iban') {
+        if (!/^\d{21}$/.test(String(iban || ''))) {
+            return res.status(400).json({ success: false, error: 'IBAN inválido. Deve ter 21 números.' });
+        }
+        if (!beneficiarioNome || String(beneficiarioNome).trim().length < 3) {
+            return res.status(400).json({ success: false, error: 'Nome do beneficiário inválido.' });
+        }
     }
 
     const client = await pool.connect();
@@ -164,10 +195,21 @@ app.post('/levantamentos/solicitar', async (req, res) => {
         );
 
         const levantamentoRes = await client.query(
-            `INSERT INTO levantamentos (user_id, user_nome, user_telefone, valor, status, data_solicitacao)
-             VALUES ($1, $2, $3, $4, 'pendente', NOW())
+            `INSERT INTO levantamentos (
+                user_id, user_nome, user_telefone, metodo, unitel_telefone, iban, beneficiario_nome, valor, status, data_solicitacao
+            )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pendente', NOW())
              RETURNING *`,
-            [userId, usuario.nome_completo, usuario.telefone, valorNumerico]
+            [
+                userId,
+                usuario.nome_completo,
+                usuario.telefone,
+                metodoNormalizado,
+                metodoNormalizado === 'unitel_money' ? String(unitelTelefone) : null,
+                metodoNormalizado === 'iban' ? String(iban) : null,
+                metodoNormalizado === 'iban' ? String(beneficiarioNome).trim() : null,
+                valorNumerico
+            ]
         );
 
         await client.query('COMMIT');
@@ -200,7 +242,7 @@ app.post('/levantamentos/solicitar', async (req, res) => {
 app.get('/levantamentos/:userId', async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT id, user_id, user_nome, user_telefone, valor, status, motivo_rejeicao,
+            `SELECT id, user_id, user_nome, user_telefone, metodo, unitel_telefone, iban, beneficiario_nome, valor, status, motivo_rejeicao,
                     data_solicitacao, data_resposta
              FROM levantamentos
              WHERE user_id = $1
@@ -216,7 +258,7 @@ app.get('/levantamentos/:userId', async (req, res) => {
 app.get('/admin/levantamentos', async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT id, user_id, user_nome, user_telefone, valor, status, motivo_rejeicao,
+            `SELECT id, user_id, user_nome, user_telefone, metodo, unitel_telefone, iban, beneficiario_nome, valor, status, motivo_rejeicao,
                     data_solicitacao, data_resposta
              FROM levantamentos
              ORDER BY
