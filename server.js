@@ -85,7 +85,18 @@ async function criarTabelasSeNaoExistirem() {
             ADD COLUMN IF NOT EXISTS iban VARCHAR(40),
             ADD COLUMN IF NOT EXISTS beneficiario_nome VARCHAR(255);
         `);
-        console.log('вњ… Tabelas transacoes e levantamentos verificadas/criadas com sucesso');
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS historico_excluido (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                registro_tipo VARCHAR(30) NOT NULL,
+                registro_id INTEGER NOT NULL,
+                data_exclusao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, registro_tipo, registro_id),
+                FOREIGN KEY (user_id) REFERENCES usuarios(id) ON DELETE CASCADE
+            );
+        `);
+        console.log('вњ… Tabelas transacoes, levantamentos e historico_excluido verificadas/criadas com sucesso');
     } catch (e) {
         console.log('вљ пёЏ Erro ao criar tabelas:', e.message);
     }
@@ -727,9 +738,21 @@ app.get('/historico/:userId', async (req, res) => {
       ORDER BY data_solicitacao DESC`,
       [userId]
     );
+
+    const historicoExcluidoRes = await pool.query(
+      `SELECT registro_tipo, registro_id
+       FROM historico_excluido
+       WHERE user_id = $1`,
+      [userId]
+    );
+    const historicoExcluidoSet = new Set(
+      historicoExcluidoRes.rows.map(r => `${String(r.registro_tipo)}-${Number(r.registro_id)}`)
+    );
     
     // Formatar os dados para o frontend
-    const transacoes = result.rows.map(t => {
+    const transacoes = result.rows
+      .filter(t => !historicoExcluidoSet.has(`transacao-${Number(t.id)}`))
+      .map(t => {
       let titulo = '';
       let icon = 'рџ“Њ';
       let tipo = '';
@@ -777,7 +800,9 @@ app.get('/historico/:userId', async (req, res) => {
       };
     });
 
-    const historicoLevantamentos = levantamentosRes.rows.map(l => {
+    const historicoLevantamentos = levantamentosRes.rows
+      .filter(l => !historicoExcluidoSet.has(`levantamento-${Number(l.id)}`))
+      .map(l => {
       const valor = Math.abs(parseFloat(l.valor));
       const status = String(l.status || 'pendente').toLowerCase();
 
@@ -826,6 +851,57 @@ app.get('/historico/:userId', async (req, res) => {
     res.json(historicoCompleto);
   } catch (err) {
     res.status(500).json({ error: 'Erro ao buscar histГіrico' });
+  }
+});
+
+app.post('/historico/eliminar', async (req, res) => {
+  const { userId, registroId } = req.body;
+  const userIdNum = parseInt(userId);
+  const registroIdTexto = String(registroId || '');
+
+  if (!Number.isInteger(userIdNum) || userIdNum <= 0 || !registroIdTexto.includes('-')) {
+    return res.status(400).json({ success: false, error: 'Dados invalidos para eliminar historico.' });
+  }
+
+  const partes = registroIdTexto.split('-');
+  const registroTipo = partes[0];
+  const idNum = parseInt(partes[1]);
+
+  if (!['transacao', 'levantamento'].includes(registroTipo) || !Number.isInteger(idNum) || idNum <= 0) {
+    return res.status(400).json({ success: false, error: 'Registro de historico invalido.' });
+  }
+
+  try {
+    if (registroTipo === 'transacao') {
+      const donoRes = await pool.query(
+        `SELECT id FROM transacoes
+         WHERE id = $1 AND (remetente_id = $2 OR destinatario_id = $2)`,
+        [idNum, userIdNum]
+      );
+      if (donoRes.rowCount === 0) {
+        return res.status(404).json({ success: false, error: 'Transacao nao encontrada para este utilizador.' });
+      }
+    } else {
+      const donoRes = await pool.query(
+        'SELECT id FROM levantamentos WHERE id = $1 AND user_id = $2',
+        [idNum, userIdNum]
+      );
+      if (donoRes.rowCount === 0) {
+        return res.status(404).json({ success: false, error: 'Levantamento nao encontrado para este utilizador.' });
+      }
+    }
+
+    await pool.query(
+      `INSERT INTO historico_excluido (user_id, registro_tipo, registro_id)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (user_id, registro_tipo, registro_id) DO NOTHING`,
+      [userIdNum, registroTipo, idNum]
+    );
+
+    io.emit('atualizar-historico', { userId: userIdNum, registroTipo, registroId: idNum });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
