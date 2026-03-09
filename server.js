@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
 const http = require('http');
@@ -14,19 +14,19 @@ app.use(cors());
 app.use(express.json());
 
 
-// CONFIGURAÇÃO DO BANCO (ANGOMONEY na Render)
+// CONFIGURAГ‡ГѓO DO BANCO (ANGOMONEY na Render)
 const pool = new Pool({
   connectionString: 'postgresql://admin:QNrPj3x9mTVNEwtlB3Qyyxil8Qzboeyi@dpg-d6kiqcdactks739ugkq0-a.oregon-postgres.render.com/formularios_4yoj',
   ssl: { rejectUnauthorized: false }
 });
 
-// MAPA PARA GUARDAR USUÁRIOS ONLINE
+// MAPA PARA GUARDAR USUГЃRIOS ONLINE
 const usuariosOnline = new Map();
 
 io.on('connection', (socket) => {
     socket.on('registrar-online', (telefone) => {
         usuariosOnline.set(String(telefone), socket.id);
-        console.log(`📱 Usuário ${telefone} está online.`);
+        console.log(`рџ“± UsuГЎrio ${telefone} estГЎ online.`);
     });
 
     socket.on('disconnect', () => {
@@ -43,7 +43,7 @@ function notificarSaldoUsuario(telefone, payload) {
     }
 }
 
-// Criar tabela de transações se não existir
+// Criar tabela de transaГ§Гµes se nГЈo existir
 async function criarTabelasSeNaoExistirem() {
     try {
         await pool.query(`
@@ -85,29 +85,29 @@ async function criarTabelasSeNaoExistirem() {
             ADD COLUMN IF NOT EXISTS iban VARCHAR(40),
             ADD COLUMN IF NOT EXISTS beneficiario_nome VARCHAR(255);
         `);
-        console.log('✅ Tabelas transacoes e levantamentos verificadas/criadas com sucesso');
+        console.log('вњ… Tabelas transacoes e levantamentos verificadas/criadas com sucesso');
     } catch (e) {
-        console.log('⚠️ Erro ao criar tabelas:', e.message);
+        console.log('вљ пёЏ Erro ao criar tabelas:', e.message);
     }
 }
 
 criarTabelasSeNaoExistirem();
 
-// --- ROTA DE TRANSFERÊNCIA P2P ---
+// --- ROTA DE TRANSFERГЉNCIA P2P ---
 app.post('/transferir', async (req, res) => {
   const { remetenteTelefone, destinoTelefone, valor } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     
-    // Buscar IDs e nomes dos usuários
+    // Buscar IDs e nomes dos usuГЎrios
     const remetenteRes = await client.query('SELECT id, nome_completo FROM usuarios WHERE telefone = $1', [remetenteTelefone]);
-    if (remetenteRes.rowCount === 0) throw new Error('Remetente não encontrado');
+    if (remetenteRes.rowCount === 0) throw new Error('Remetente nГЈo encontrado');
     const remetenteId = remetenteRes.rows[0].id;
     const remetenteName = remetenteRes.rows[0].nome_completo;
 
     const destinatarioRes = await client.query('SELECT id, nome_completo FROM usuarios WHERE telefone = $1', [destinoTelefone]);
-    if (destinatarioRes.rowCount === 0) throw new Error('Destinatário não encontrado');
+    if (destinatarioRes.rowCount === 0) throw new Error('DestinatГЎrio nГЈo encontrado');
     const destinatarioId = destinatarioRes.rows[0].id;
     const destinatarioName = destinatarioRes.rows[0].nome_completo;
     
@@ -116,9 +116,9 @@ app.post('/transferir', async (req, res) => {
     if (desc.rowCount === 0) throw new Error('Saldo insuficiente');
     
     const inc = await client.query('UPDATE usuarios SET saldo_usd = saldo_usd + $1 WHERE telefone = $2 RETURNING saldo_usd', [valor, destinoTelefone]);
-    if (inc.rowCount === 0) throw new Error('Destinatário não encontrado');
+    if (inc.rowCount === 0) throw new Error('DestinatГЎrio nГЈo encontrado');
     
-    // Guardar transação na database
+    // Guardar transaГ§ГЈo na database
     await client.query(
         'INSERT INTO transacoes (remetente_id, remetente_nome, destinatario_id, destinatario_nome, valor, data) VALUES ($1, $2, $3, $4, $5, NOW())',
         [remetenteId, remetenteName, destinatarioId, destinatarioName, valor]
@@ -126,7 +126,7 @@ app.post('/transferir', async (req, res) => {
     
     await client.query('COMMIT');
 
-    // ATUALIZAÇÃO EM TEMPO REAL
+    // ATUALIZAГ‡ГѓO EM TEMPO REAL
     const socketDestino = usuariosOnline.get(String(destinoTelefone));
     if (socketDestino) {
         io.to(socketDestino).emit('atualizar-saldo', { novoSaldo: inc.rows[0].saldo_usd });
@@ -145,27 +145,32 @@ app.post('/levantamentos/solicitar', async (req, res) => {
     const { userId, valor, metodo, unitelTelefone, iban, beneficiarioNome } = req.body;
     const valorNumerico = parseFloat(valor);
     const metodoNormalizado = String(metodo || '').toLowerCase();
+    const VALOR_MINIMO_LEVANTAMENTO = 3;
 
     if (!userId || !valorNumerico || valorNumerico <= 0 || !metodoNormalizado) {
-        return res.status(400).json({ success: false, error: 'Dados de levantamento inválidos.' });
+        return res.status(400).json({ success: false, error: 'Dados de levantamento invГЎlidos.' });
+    }
+
+    if (valorNumerico < VALOR_MINIMO_LEVANTAMENTO) {
+        return res.status(400).json({ success: false, error: 'O valor minimo para levantamento e 3.00 USD.' });
     }
 
     if (!['unitel_money', 'iban'].includes(metodoNormalizado)) {
-        return res.status(400).json({ success: false, error: 'Método de levantamento inválido.' });
+        return res.status(400).json({ success: false, error: 'MГ©todo de levantamento invГЎlido.' });
     }
 
     if (metodoNormalizado === 'unitel_money') {
         if (!/^9\d{8}$/.test(String(unitelTelefone || ''))) {
-            return res.status(400).json({ success: false, error: 'Número Unitel Money inválido. Deve começar com 9 e ter 9 dígitos.' });
+            return res.status(400).json({ success: false, error: 'NГєmero Unitel Money invГЎlido. Deve comeГ§ar com 9 e ter 9 dГ­gitos.' });
         }
     }
 
     if (metodoNormalizado === 'iban') {
         if (!/^\d{21}$/.test(String(iban || ''))) {
-            return res.status(400).json({ success: false, error: 'IBAN inválido. Deve ter 21 números.' });
+            return res.status(400).json({ success: false, error: 'IBAN invГЎlido. Deve ter 21 nГєmeros.' });
         }
         if (!beneficiarioNome || String(beneficiarioNome).trim().length < 3) {
-            return res.status(400).json({ success: false, error: 'Nome do beneficiário inválido.' });
+            return res.status(400).json({ success: false, error: 'Nome do beneficiГЎrio invГЎlido.' });
         }
     }
 
@@ -179,7 +184,7 @@ app.post('/levantamentos/solicitar', async (req, res) => {
         );
 
         if (usuarioRes.rowCount === 0) {
-            throw new Error('Usuário não encontrado.');
+            throw new Error('UsuГЎrio nГЈo encontrado.');
         }
 
         const usuario = usuarioRes.rows[0];
@@ -217,7 +222,7 @@ app.post('/levantamentos/solicitar', async (req, res) => {
         const novoSaldo = parseFloat(novoSaldoRes.rows[0].saldo_usd);
         notificarSaldoUsuario(usuario.telefone, {
             novoSaldo,
-            mensagem: `Seu levantamento de $${valorNumerico.toFixed(2)} foi solicitado e está pendente.`
+            mensagem: `Seu levantamento de $${valorNumerico.toFixed(2)} foi solicitado e estГЎ pendente.`
         });
 
         io.emit('atualizar-levantamentos', {
@@ -296,12 +301,12 @@ app.post('/admin/levantamentos/:id/aprovar', async (req, res) => {
         );
 
         if (levantamentoRes.rowCount === 0) {
-            throw new Error('Levantamento não encontrado.');
+            throw new Error('Levantamento nГЈo encontrado.');
         }
 
         const levantamento = levantamentoRes.rows[0];
         if (levantamento.status !== 'pendente') {
-            throw new Error('Este levantamento já foi processado.');
+            throw new Error('Este levantamento jГЎ foi processado.');
         }
 
         await client.query(
@@ -360,12 +365,12 @@ app.post('/admin/levantamentos/:id/rejeitar', async (req, res) => {
         );
 
         if (levantamentoRes.rowCount === 0) {
-            throw new Error('Levantamento não encontrado.');
+            throw new Error('Levantamento nГЈo encontrado.');
         }
 
         const levantamento = levantamentoRes.rows[0];
         if (levantamento.status !== 'pendente') {
-            throw new Error('Este levantamento já foi processado.');
+            throw new Error('Este levantamento jГЎ foi processado.');
         }
 
         const saldoRes = await client.query(
@@ -421,7 +426,7 @@ app.post('/admin/levantamentos/:id/eliminar', async (req, res) => {
         );
 
         if (result.rowCount === 0) {
-            return res.status(404).json({ success: false, error: 'Levantamento não encontrado.' });
+            return res.status(404).json({ success: false, error: 'Levantamento nГЈo encontrado.' });
         }
 
         io.emit('atualizar-levantamentos', {
@@ -442,18 +447,18 @@ app.post('/auth/cadastro', async (req, res) => {
     const { nome, telefone, senha } = req.body;
     
     try {
-        // 1. PRIMEIRO: Verificamos se o número já existe
+        // 1. PRIMEIRO: Verificamos se o nГєmero jГЎ existe
         const checkUser = await pool.query('SELECT id FROM usuarios WHERE telefone = $1', [telefone]);
         
         if (checkUser.rows.length > 0) {
-            // Se encontrar alguém, paramos aqui e avisamos
+            // Se encontrar alguГ©m, paramos aqui e avisamos
             return res.status(400).json({ 
                 success: false, 
-                error: 'Este número já está registado' 
+                error: 'Este nГєmero jГЎ estГЎ registado' 
             });
         }
 
-        // 2. SE NÃO EXISTIR: Aí sim fazemos o cadastro
+        // 2. SE NГѓO EXISTIR: AГ­ sim fazemos o cadastro
         const query = 'INSERT INTO usuarios (nome_completo, telefone, senha, saldo_usd) VALUES ($1, $2, $3, 2) RETURNING *';
         const result = await pool.query(query, [nome, telefone, senha]);
         
@@ -478,8 +483,39 @@ app.get('/buscar-usuario/:telefone', async (req, res) => {
     try {
         const result = await pool.query('SELECT id, nome_completo AS nome, telefone, saldo_usd, senha FROM usuarios WHERE telefone = $1', [req.params.telefone]);
         if (result.rows.length > 0) res.json(result.rows[0]);
-        else res.status(404).json({ error: 'Não encontrado' });
+        else res.status(404).json({ error: 'NГЈo encontrado' });
     } catch (err) { res.status(500).json({ error: 'Erro no servidor' }); }
+});
+
+app.get('/admin/investimentos-usuario/:userId', async (req, res) => {
+    try {
+        const userId = parseInt(req.params.userId);
+        if (!Number.isInteger(userId) || userId <= 0) {
+            return res.status(400).json({ success: false, error: 'Utilizador invalido.' });
+        }
+
+        const usuarioRes = await pool.query(
+            'SELECT id, nome_completo AS nome, telefone, saldo_usd FROM usuarios WHERE id = $1',
+            [userId]
+        );
+
+        if (usuarioRes.rowCount === 0) {
+            return res.status(404).json({ success: false, error: 'Utilizador nao encontrado.' });
+        }
+
+        const investimentosRes = await pool.query(
+            "SELECT *, CAST(EXTRACT(DAY FROM (data_fim - CURRENT_DATE)) AS INTEGER) AS dias_restantes FROM investimentos WHERE user_id = $1 ORDER BY data_fim DESC",
+            [userId]
+        );
+
+        res.json({
+            success: true,
+            usuario: usuarioRes.rows[0],
+            investimentos: investimentosRes.rows
+        });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
 });
 
 // --- 2. NOVA ROTA: TOTAL DA PLATAFORMA ---
@@ -490,7 +526,7 @@ app.get('/admin/total-plataforma', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// --- 3. NOVA ROTA: TOTAL DE USUÁRIOS CADASTRADOS ---
+// --- 3. NOVA ROTA: TOTAL DE USUГЃRIOS CADASTRADOS ---
 app.get('/admin/total-usuarios', async (req, res) => {
     try {
         const result = await pool.query('SELECT COUNT(*) as total FROM usuarios');
@@ -531,7 +567,7 @@ app.post('/admin/alterar-senha', async (req, res) => {
     }
 
     if (!novaSenha || String(novaSenha).trim().length < 4) {
-        return res.status(400).json({ success: false, error: 'Nova senha inválida.' });
+        return res.status(400).json({ success: false, error: 'Nova senha invГЎlida.' });
     }
 
     try {
@@ -540,7 +576,7 @@ app.post('/admin/alterar-senha', async (req, res) => {
             [String(novaSenha).trim(), userId]
         );
         if (result.rowCount === 0) {
-            return res.status(404).json({ success: false, error: 'Utilizador não encontrado.' });
+            return res.status(404).json({ success: false, error: 'Utilizador nГЈo encontrado.' });
         }
         res.json({ success: true });
     } catch (e) {
@@ -561,7 +597,7 @@ app.post('/admin/ajustar-saldo', async (req, res) => {
         if (operacao === 'soma') {
             query = 'UPDATE usuarios SET saldo_usd = saldo_usd + $1 WHERE id = $2 RETURNING saldo_usd, telefone, nome_completo';
         } else {
-            // AQUI ESTÁ A TRAVA: Só subtrai se o saldo atual for maior ou igual ao valor pedido
+            // AQUI ESTГЃ A TRAVA: SГі subtrai se o saldo atual for maior ou igual ao valor pedido
             query = 'UPDATE usuarios SET saldo_usd = saldo_usd - $1 WHERE id = $2 AND saldo_usd >= $1 RETURNING saldo_usd, telefone, nome_completo';
         }
         
@@ -570,8 +606,8 @@ app.post('/admin/ajustar-saldo', async (req, res) => {
         if (result.rowCount > 0) {
             const { saldo_usd, telefone, nome_completo } = result.rows[0];
 
-            // Registrar no histórico de transações
-            const tipoTransacao = operacao === 'soma' ? 'Depósito' : 'Levantamento';
+            // Registrar no histГіrico de transaГ§Гµes
+            const tipoTransacao = operacao === 'soma' ? 'DepГіsito' : 'Levantamento';
             const valorRegistro = operacao === 'soma' ? valor : -valor;
             
             await client.query(
@@ -581,7 +617,7 @@ app.post('/admin/ajustar-saldo', async (req, res) => {
 
             await client.query('COMMIT');
 
-            // Notificação em tempo real via Socket.io
+            // NotificaГ§ГЈo em tempo real via Socket.io
             const socketDestino = usuariosOnline.get(String(telefone));
             if (socketDestino) {
                 io.to(socketDestino).emit('atualizar-saldo', { 
@@ -593,10 +629,10 @@ app.post('/admin/ajustar-saldo', async (req, res) => {
             res.json({ success: true, novoSaldo: saldo_usd });
         } else {
             await client.query('ROLLBACK');
-            // Se o rowCount for 0 na subtração, significa que o saldo era insuficiente
+            // Se o rowCount for 0 na subtraГ§ГЈo, significa que o saldo era insuficiente
             const erroMsg = operacao === 'subtracao' || operacao === 'subtrair' 
-                ? "Saldo insuficiente na conta do usuário para realizar esta operação." 
-                : "Usuário não encontrado.";
+                ? "Saldo insuficiente na conta do usuГЎrio para realizar esta operaГ§ГЈo." 
+                : "UsuГЎrio nГЈo encontrado.";
             res.status(400).json({ success: false, error: erroMsg });
         }
     } catch (e) { 
@@ -607,26 +643,26 @@ app.post('/admin/ajustar-saldo', async (req, res) => {
     }
 });
 
-// --- 4. ROTA PARA DISTRIBUIR BÓNUS GLOBAL ---
+// --- 4. ROTA PARA DISTRIBUIR BГ“NUS GLOBAL ---
 app.post('/admin/bonus-global', async (req, res) => {
     const { valor } = req.body;
     try {
-        // Atualiza o saldo de TODOS os usuários
+        // Atualiza o saldo de TODOS os usuГЎrios
         const result = await pool.query('UPDATE usuarios SET saldo_usd = saldo_usd + $1 RETURNING id, saldo_usd, telefone', [valor]);
 
         if (result.rows.length > 0) {
-            // Notifica todos os usuários online em tempo real
+            // Notifica todos os usuГЎrios online em tempo real
             result.rows.forEach((usuario) => {
                 const socketDestino = usuariosOnline.get(String(usuario.telefone));
                 if (socketDestino) {
                     io.to(socketDestino).emit('atualizar-saldo', {
                         novoSaldo: usuario.saldo_usd,
-                        mensagem: `🎁 Você recebeu um bónus de $${valor} do administrador!`
+                        mensagem: `рџЋЃ VocГЄ recebeu um bГіnus de $${valor} do administrador!`
                     });
                 }
             });
 
-            res.json({ success: true, usuariosAtualizados: result.rows.length, mensagem: `Bónus de $${valor} enviado para ${result.rows.length} utilizadores.` });
+            res.json({ success: true, usuariosAtualizados: result.rows.length, mensagem: `BГіnus de $${valor} enviado para ${result.rows.length} utilizadores.` });
         } else {
             res.status(400).json({ success: false, error: "Nenhum utilizador encontrado." });
         }
@@ -635,7 +671,7 @@ app.post('/admin/bonus-global', async (req, res) => {
     }
 });
 
-// --- 5. ROTA PARA ELIMINAR USUÁRIO ---
+// --- 5. ROTA PARA ELIMINAR USUГЃRIO ---
 app.post('/admin/eliminar-usuario', async (req, res) => {
     const { userId, senha } = req.body;
     
@@ -651,14 +687,14 @@ app.post('/admin/eliminar-usuario', async (req, res) => {
         if (deleteUser.rowCount > 0) {
             res.json({ success: true, mensagem: `Utilizador ${deleteUser.rows[0].nome_completo} eliminado com sucesso.` });
         } else {
-            res.status(404).json({ success: false, error: 'Utilizador não encontrado.' });
+            res.status(404).json({ success: false, error: 'Utilizador nГЈo encontrado.' });
         }
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
 });
 
-// BUSCAR HISTÓRICO DE TRANSAÇÕES DO USUÁRIO
+// BUSCAR HISTГ“RICO DE TRANSAГ‡Г•ES DO USUГЃRIO
 app.get('/historico/:userId', async (req, res) => {
   try {
     const userId = parseInt(req.params.userId);
@@ -695,32 +731,38 @@ app.get('/historico/:userId', async (req, res) => {
     // Formatar os dados para o frontend
     const transacoes = result.rows.map(t => {
       let titulo = '';
-      let icon = '📌';
+      let icon = 'рџ“Њ';
       let tipo = '';
+      const remetenteNome = String(t.remetente_nome || '').toLowerCase();
+      const destinatarioNome = String(t.destinatario_nome || '').toLowerCase();
       
-      if (t.remetente_nome === 'Investimento') {
+      if (destinatarioNome === 'investimento' || remetenteNome === 'investimento') {
         titulo = `Investimento de $${Math.abs(t.valor).toFixed(2)}`;
-        icon = '💰';
+        icon = 'рџ’°';
         tipo = 'investimento';
-      } else if (t.remetente_nome === 'Ganho do investimento') {
+      } else if (remetenteNome === 'ganho do investimento' || destinatarioNome === 'ganho do investimento') {
         titulo = 'Ganho do investimento';
-        icon = '📈';
+        icon = 'рџ“€';
         tipo = 'ganho';
-      } else if (t.remetente_nome === 'Depósito') {
-        titulo = 'Depósito (Admin)';
-        icon = '💵';
+      } else if (remetenteNome === 'cancelamento de investimento' || destinatarioNome === 'cancelamento de investimento') {
+        titulo = 'Cancelamento do plano a prazo';
+        icon = 'в†©пёЏ';
+        tipo = 'cancelamento_investimento';
+      } else if (t.remetente_nome === 'DepГіsito') {
+        titulo = 'DepГіsito (Admin)';
+        icon = 'рџ’µ';
         tipo = 'deposito';
       } else if (t.remetente_nome === 'Levantamento') {
         titulo = 'Levantamento (Admin)';
-        icon = '🏦';
+        icon = 'рџЏ¦';
         tipo = 'levantamento';
       } else if (t.remetente_id === userId) {
         titulo = `Enviou para ${t.destinatario_nome}`;
-        icon = '📤';
+        icon = 'рџ“¤';
         tipo = 'enviado';
       } else {
         titulo = `Recebeu de ${t.remetente_nome}`;
-        icon = '📥';
+        icon = 'рџ“Ґ';
         tipo = 'recebido';
       }
       
@@ -746,7 +788,7 @@ app.get('/historico/:userId', async (req, res) => {
           tipo: 'levantamento_pago',
           valor: -valor,
           data: l.data_resposta || l.data_solicitacao,
-          icon: '✅',
+          icon: 'вњ…',
           nome: 'Levantamento',
           status
         };
@@ -759,7 +801,7 @@ app.get('/historico/:userId', async (req, res) => {
           tipo: 'levantamento_rejeitado',
           valor: valor,
           data: l.data_resposta || l.data_solicitacao,
-          icon: '↩️',
+          icon: 'в†©пёЏ',
           nome: 'Levantamento',
           status
         };
@@ -771,7 +813,7 @@ app.get('/historico/:userId', async (req, res) => {
         tipo: 'levantamento_pendente',
         valor: -valor,
         data: l.data_solicitacao,
-        icon: '🏦',
+        icon: 'рџЏ¦',
         nome: 'Levantamento',
         status
       };
@@ -783,11 +825,11 @@ app.get('/historico/:userId', async (req, res) => {
 
     res.json(historicoCompleto);
   } catch (err) {
-    res.status(500).json({ error: 'Erro ao buscar histórico' });
+    res.status(500).json({ error: 'Erro ao buscar histГіrico' });
   }
 });
 
-// BUSCAR INVESTIMENTOS DO USUÁRIO
+// BUSCAR INVESTIMENTOS DO USUГЃRIO
 app.get('/meus-investimentos/:userId', async (req, res) => {
   try {
     const result = await pool.query(
@@ -807,7 +849,10 @@ app.post('/investir', async (req, res) => {
     await client.query('BEGIN');
     
     // 1. Tira o dinheiro do saldo
-    const desc = await client.query('UPDATE usuarios SET saldo_usd = saldo_usd - $1 WHERE id = $2 AND saldo_usd >= $1 RETURNING saldo_usd', [valor, userId]);
+    const desc = await client.query(
+      'UPDATE usuarios SET saldo_usd = saldo_usd - $1 WHERE id = $2 AND saldo_usd >= $1 RETURNING saldo_usd, telefone',
+      [valor, userId]
+    );
     if (desc.rowCount === 0) throw new Error('Saldo insuficiente para investir');
 
     // 2. Calcula o retorno e a data final
@@ -817,14 +862,22 @@ app.post('/investir', async (req, res) => {
         [userId, valor, retorno, dias]
     );
 
-    // Guardar investimento no histórico
+    // Guardar investimento no histГіrico
     await client.query(
         'INSERT INTO transacoes (remetente_id, remetente_nome, destinatario_id, destinatario_nome, valor, data) VALUES ($1, $2, $3, $4, $5, NOW())',
         [userId, 'Sistema', userId, 'Investimento', -valor]
     );
 
     await client.query('COMMIT');
-    res.json({ success: true, novoSaldo: desc.rows[0].saldo_usd, retornoTotal: retorno });
+
+    const novoSaldo = parseFloat(desc.rows[0].saldo_usd);
+    notificarSaldoUsuario(desc.rows[0].telefone, {
+      novoSaldo,
+      mensagem: 'Novo investimento aplicado com sucesso.'
+    });
+    io.emit('atualizar-investimentos', { userId: Number(userId), acao: 'criado' });
+
+    res.json({ success: true, novoSaldo, retornoTotal: retorno });
   } catch (e) {
     await client.query('ROLLBACK');
     res.status(400).json({ error: e.message });
@@ -846,12 +899,12 @@ app.post('/resgatar-investimento', async (req, res) => {
     );
     
     if (invRes.rowCount === 0) {
-      throw new Error('Investimento não encontrado');
+      throw new Error('Investimento nГЈo encontrado');
     }
     
     const investimento = invRes.rows[0];
     
-    // 2. Validar se venceu (VALIDAÇÃO NO SERVIDOR)
+    // 2. Validar se venceu (VALIDAГ‡ГѓO NO SERVIDOR)
     const dataFimCheck = await client.query(
       'SELECT CURRENT_DATE >= data_fim as venceu, data_fim FROM investimentos WHERE id = $1',
       [investmentId]
@@ -863,17 +916,17 @@ app.post('/resgatar-investimento', async (req, res) => {
         success: false, 
         vencido: false,
         dataFim: dataFimCheck.rows[0].data_fim,
-        error: 'Prazo ainda não venceu' 
+        error: 'Prazo ainda nГЈo venceu' 
       });
     }
     
     // 3. Adicionar valor ao saldo
     const saldoRes = await client.query(
-      'UPDATE usuarios SET saldo_usd = saldo_usd + $1 WHERE id = $2 RETURNING saldo_usd, nome_completo',
+      'UPDATE usuarios SET saldo_usd = saldo_usd + $1 WHERE id = $2 RETURNING saldo_usd, nome_completo, telefone',
       [investimento.valor_retorno_usd, userId]
     );
     
-    // 4. Registrar no histórico como ganho
+    // 4. Registrar no histГіrico como ganho
     await client.query(
       'INSERT INTO transacoes (remetente_id, remetente_nome, destinatario_id, destinatario_nome, valor, data) VALUES ($1, $2, $3, $4, $5, NOW())',
       [userId, 'Ganho do investimento', userId, 'Ganho do investimento', investimento.valor_retorno_usd]
@@ -883,10 +936,17 @@ app.post('/resgatar-investimento', async (req, res) => {
     await client.query('DELETE FROM investimentos WHERE id = $1', [investmentId]);
     
     await client.query('COMMIT');
+
+    const novoSaldo = parseFloat(saldoRes.rows[0].saldo_usd);
+    notificarSaldoUsuario(saldoRes.rows[0].telefone, {
+      novoSaldo,
+      mensagem: `Investimento resgatado: $${parseFloat(investimento.valor_retorno_usd).toFixed(2)} creditado.`
+    });
+    io.emit('atualizar-investimentos', { userId: Number(userId), investmentId: Number(investmentId), acao: 'resgatado' });
     
     res.json({ 
       success: true,
-      novoSaldo: saldoRes.rows[0].saldo_usd,
+      novoSaldo,
       valorRecebido: investimento.valor_retorno_usd
     });
     
@@ -898,10 +958,78 @@ app.post('/resgatar-investimento', async (req, res) => {
   }
 });
 
+app.post('/admin/investimentos/:id/cancelar', async (req, res) => {
+  const investimentoId = parseInt(req.params.id);
+  const { senhaAdmin } = req.body;
 
-// --- INICIALIZAÇÃO ---
+  if (senhaAdmin !== '123') {
+    return res.status(401).json({ success: false, error: 'Senha de administrador incorreta.' });
+  }
+
+  if (!Number.isInteger(investimentoId) || investimentoId <= 0) {
+    return res.status(400).json({ success: false, error: 'Investimento invalido.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const investimentoRes = await client.query(
+      `SELECT i.id, i.user_id, i.valor_investido_usd, u.telefone
+       FROM investimentos i
+       INNER JOIN usuarios u ON u.id = i.user_id
+       WHERE i.id = $1
+       FOR UPDATE`,
+      [investimentoId]
+    );
+
+    if (investimentoRes.rowCount === 0) {
+      throw new Error('Investimento nao encontrado.');
+    }
+
+    const investimento = investimentoRes.rows[0];
+    const valorDevolvido = parseFloat(investimento.valor_investido_usd);
+
+    const saldoRes = await client.query(
+      'UPDATE usuarios SET saldo_usd = saldo_usd + $1 WHERE id = $2 RETURNING saldo_usd',
+      [valorDevolvido, investimento.user_id]
+    );
+
+    await client.query(
+      'INSERT INTO transacoes (remetente_id, remetente_nome, destinatario_id, destinatario_nome, valor, data) VALUES ($1, $2, $3, $4, $5, NOW())',
+      [investimento.user_id, 'Cancelamento de investimento', investimento.user_id, 'Cancelamento de investimento', valorDevolvido]
+    );
+
+    await client.query('DELETE FROM investimentos WHERE id = $1', [investimentoId]);
+
+    await client.query('COMMIT');
+
+    const novoSaldo = parseFloat(saldoRes.rows[0].saldo_usd);
+    notificarSaldoUsuario(investimento.telefone, {
+      novoSaldo,
+      mensagem: `Investimento cancelado pelo administrador. $${valorDevolvido.toFixed(2)} devolvido.`
+    });
+    io.emit('atualizar-investimentos', { userId: Number(investimento.user_id), investmentId: investimentoId, acao: 'cancelado_admin' });
+
+    res.json({
+      success: true,
+      userId: Number(investimento.user_id),
+      novoSaldo,
+      valorDevolvido
+    });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    res.status(400).json({ success: false, error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+
+// --- INICIALIZAГ‡ГѓO ---
 
 const PORTA = process.env.PORT || 3000;
 server.listen(PORTA, '0.0.0.0', () => {
-    console.log(`🚀 API KWANZA NEXUS na Render ativa!`);
+    console.log(`рџљЂ API KWANZA NEXUS na Render ativa!`);
 });
+
