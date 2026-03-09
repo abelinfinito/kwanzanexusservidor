@@ -920,6 +920,19 @@ app.get('/meus-investimentos/:userId', async (req, res) => {
 // ROTA PARA CRIAR INVESTIMENTO
 app.post('/investir', async (req, res) => {
   const { userId, valor, taxa, dias } = req.body;
+  const diasPlano = parseInt(dias);
+  const taxaInformada = parseFloat(taxa);
+  const planosPermitidos = {
+    7: 0.20,
+    30: 0.70,
+    90: 2.00
+  };
+  const taxaPlano = planosPermitidos[diasPlano];
+
+  if (!taxaPlano || !Number.isFinite(taxaInformada) || Math.abs(taxaInformada - taxaPlano) > 0.0001) {
+    return res.status(400).json({ error: 'Plano de investimento invalido.' });
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -932,10 +945,10 @@ app.post('/investir', async (req, res) => {
     if (desc.rowCount === 0) throw new Error('Saldo insuficiente para investir');
 
     // 2. Calcula o retorno e a data final
-    const retorno = valor + (valor * taxa);
+    const retorno = valor + (valor * taxaPlano);
     await client.query(
         'INSERT INTO investimentos (user_id, valor_investido_usd, valor_retorno_usd, data_fim) VALUES ($1, $2, $3, CURRENT_DATE + $4 * INTERVAL \'1 day\')',
-        [userId, valor, retorno, dias]
+        [userId, valor, retorno, diasPlano]
     );
 
     // Guardar investimento no histГіrico
