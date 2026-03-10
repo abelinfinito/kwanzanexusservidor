@@ -86,6 +86,12 @@ async function criarTabelasSeNaoExistirem() {
             ADD COLUMN IF NOT EXISTS beneficiario_nome VARCHAR(255);
         `);
         await pool.query(`
+            ALTER TABLE usuarios
+            ADD COLUMN IF NOT EXISTS unitel_money VARCHAR(20),
+            ADD COLUMN IF NOT EXISTS iban VARCHAR(40),
+            ADD COLUMN IF NOT EXISTS beneficiario_nome VARCHAR(255);
+        `);
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS historico_excluido (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -107,6 +113,11 @@ criarTabelasSeNaoExistirem();
 // --- ROTA DE TRANSFERГЉNCIA P2P ---
 app.post('/transferir', async (req, res) => {
   const { remetenteTelefone, destinoTelefone, valor } = req.body;
+  const valorNum = parseFloat(valor);
+
+  if (!Number.isFinite(valorNum) || valorNum < 1) {
+    return res.status(400).json({ error: 'O valor minimo de transferencia e 1.00 USD.' });
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -123,16 +134,16 @@ app.post('/transferir', async (req, res) => {
     const destinatarioName = destinatarioRes.rows[0].nome_completo;
     
     // Atualizar saldos
-    const desc = await client.query('UPDATE usuarios SET saldo_usd = saldo_usd - $1 WHERE telefone = $2 AND saldo_usd >= $1 RETURNING saldo_usd', [valor, remetenteTelefone]);
+    const desc = await client.query('UPDATE usuarios SET saldo_usd = saldo_usd - $1 WHERE telefone = $2 AND saldo_usd >= $1 RETURNING saldo_usd', [valorNum, remetenteTelefone]);
     if (desc.rowCount === 0) throw new Error('Saldo insuficiente');
     
-    const inc = await client.query('UPDATE usuarios SET saldo_usd = saldo_usd + $1 WHERE telefone = $2 RETURNING saldo_usd', [valor, destinoTelefone]);
+    const inc = await client.query('UPDATE usuarios SET saldo_usd = saldo_usd + $1 WHERE telefone = $2 RETURNING saldo_usd', [valorNum, destinoTelefone]);
     if (inc.rowCount === 0) throw new Error('DestinatГЎrio nГЈo encontrado');
     
     // Guardar transaГ§ГЈo na database
     await client.query(
         'INSERT INTO transacoes (remetente_id, remetente_nome, destinatario_id, destinatario_nome, valor, data) VALUES ($1, $2, $3, $4, $5, NOW())',
-        [remetenteId, remetenteName, destinatarioId, destinatarioName, valor]
+        [remetenteId, remetenteName, destinatarioId, destinatarioName, valorNum]
     );
     
     await client.query('COMMIT');
@@ -156,14 +167,14 @@ app.post('/levantamentos/solicitar', async (req, res) => {
     const { userId, valor, metodo, unitelTelefone, iban, beneficiarioNome } = req.body;
     const valorNumerico = parseFloat(valor);
     const metodoNormalizado = String(metodo || '').toLowerCase();
-    const VALOR_MINIMO_LEVANTAMENTO = 3;
+    const VALOR_MINIMO_LEVANTAMENTO = 0.15;
 
     if (!userId || !valorNumerico || valorNumerico <= 0 || !metodoNormalizado) {
         return res.status(400).json({ success: false, error: 'Dados de levantamento invГЎlidos.' });
     }
 
     if (valorNumerico < VALOR_MINIMO_LEVANTAMENTO) {
-        return res.status(400).json({ success: false, error: 'O valor minimo para levantamento e 3.00 USD.' });
+        return res.status(400).json({ success: false, error: 'O valor minimo para levantamento e 0.15 USD.' });
     }
 
     if (!['unitel_money', 'iban'].includes(metodoNormalizado)) {
@@ -190,7 +201,7 @@ app.post('/levantamentos/solicitar', async (req, res) => {
         await client.query('BEGIN');
 
         const usuarioRes = await client.query(
-            'SELECT id, nome_completo, telefone, saldo_usd FROM usuarios WHERE id = $1 FOR UPDATE',
+            'SELECT id, nome_completo, telefone, saldo_usd, unitel_money, iban, beneficiario_nome FROM usuarios WHERE id = $1 FOR UPDATE',
             [userId]
         );
 
@@ -205,10 +216,54 @@ app.post('/levantamentos/solicitar', async (req, res) => {
             throw new Error('Saldo insuficiente para solicitar levantamento.');
         }
 
+        if (metodoNormalizado === 'unitel_money') {
+            const unitelAtual = usuario.unitel_money ? String(usuario.unitel_money) : '';
+            if (unitelAtual && unitelAtual !== String(unitelTelefone)) {
+                throw new Error('Numero Unitel Money ja cadastrado nesta conta.');
+            }
+
+            const outroRes = await client.query(
+                'SELECT id FROM usuarios WHERE unitel_money = $1 AND id <> $2',
+                [String(unitelTelefone), userId]
+            );
+            if (outroRes.rowCount > 0) {
+                throw new Error('Numero Unitel Money ja esta cadastrado em outra conta.');
+            }
+        }
+
+        if (metodoNormalizado === 'iban') {
+            const ibanAtual = usuario.iban ? String(usuario.iban) : '';
+            if (ibanAtual && ibanAtual !== String(iban)) {
+                throw new Error('IBAN ja cadastrado nesta conta.');
+            }
+
+            const outroRes = await client.query(
+                'SELECT id FROM usuarios WHERE iban = $1 AND id <> $2',
+                [String(iban), userId]
+            );
+            if (outroRes.rowCount > 0) {
+                throw new Error('IBAN ja esta cadastrado em outra conta.');
+            }
+        }
+
         const novoSaldoRes = await client.query(
             'UPDATE usuarios SET saldo_usd = saldo_usd - $1 WHERE id = $2 RETURNING saldo_usd',
             [valorNumerico, userId]
         );
+
+        if (metodoNormalizado === 'unitel_money') {
+            await client.query(
+                'UPDATE usuarios SET unitel_money = COALESCE(unitel_money, $1) WHERE id = $2',
+                [String(unitelTelefone), userId]
+            );
+        }
+
+        if (metodoNormalizado === 'iban') {
+            await client.query(
+                'UPDATE usuarios SET iban = COALESCE(iban, $1), beneficiario_nome = COALESCE(beneficiario_nome, $2) WHERE id = $3',
+                [String(iban), String(beneficiarioNome).trim(), userId]
+            );
+        }
 
         const levantamentoRes = await client.query(
             `INSERT INTO levantamentos (
@@ -470,7 +525,7 @@ app.post('/auth/cadastro', async (req, res) => {
         }
 
         // 2. SE NГѓO EXISTIR: AГ­ sim fazemos o cadastro
-        const query = 'INSERT INTO usuarios (nome_completo, telefone, senha, saldo_usd) VALUES ($1, $2, $3, 2) RETURNING *';
+        const query = 'INSERT INTO usuarios (nome_completo, telefone, senha, saldo_usd) VALUES ($1, $2, $3, 0.15) RETURNING *';
         const result = await pool.query(query, [nome, telefone, senha]);
         
         res.status(201).json({ success: true, usuario: result.rows[0] });
@@ -496,6 +551,28 @@ app.get('/buscar-usuario/:telefone', async (req, res) => {
         if (result.rows.length > 0) res.json(result.rows[0]);
         else res.status(404).json({ error: 'NГЈo encontrado' });
     } catch (err) { res.status(500).json({ error: 'Erro no servidor' }); }
+});
+
+app.get('/dados-bancarios/:userId', async (req, res) => {
+    try {
+        const userId = parseInt(req.params.userId);
+        if (!Number.isInteger(userId) || userId <= 0) {
+            return res.status(400).json({ success: false, error: 'Utilizador invalido.' });
+        }
+
+        const result = await pool.query(
+            'SELECT id, nome_completo, telefone, unitel_money, iban, beneficiario_nome FROM usuarios WHERE id = $1',
+            [userId]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ success: false, error: 'Utilizador nao encontrado.' });
+        }
+
+        res.json({ success: true, dados: result.rows[0] });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
 });
 
 app.get('/admin/investimentos-usuario/:userId', async (req, res) => {
