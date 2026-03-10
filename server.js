@@ -92,6 +92,18 @@ async function criarTabelasSeNaoExistirem() {
             ADD COLUMN IF NOT EXISTS beneficiario_nome VARCHAR(255);
         `);
         await pool.query(`
+            CREATE TABLE IF NOT EXISTS suporte_config (
+                id SERIAL PRIMARY KEY,
+                mensagem TEXT,
+                ativo BOOLEAN NOT NULL DEFAULT false,
+                atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        const suporteCount = await pool.query('SELECT COUNT(*) as total FROM suporte_config');
+        if (parseInt(suporteCount.rows[0].total) === 0) {
+            await pool.query('INSERT INTO suporte_config (mensagem, ativo) VALUES ($1, $2)', ['Suporte disponivel.', false]);
+        }
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS historico_excluido (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -544,10 +556,25 @@ app.post('/auth/login', async (req, res) => {
       else res.status(401).json({ error: 'Dados incorretos' });
     } catch (err) { res.status(500).json({ error: 'Erro no servidor' }); }
 });
+
+app.get('/config/suporte', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT mensagem, ativo FROM suporte_config ORDER BY id ASC LIMIT 1');
+        if (result.rowCount === 0) {
+            return res.json({ mensagem: '', ativo: false });
+        }
+        res.json({ mensagem: result.rows[0].mensagem || '', ativo: !!result.rows[0].ativo });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
 // --- 1. BUSCA CORRIGIDA (Agora envia ID e Saldo) ---
 app.get('/buscar-usuario/:telefone', async (req, res) => {
     try {
-        const result = await pool.query('SELECT id, nome_completo AS nome, telefone, saldo_usd, senha FROM usuarios WHERE telefone = $1', [req.params.telefone]);
+        const result = await pool.query(
+            'SELECT id, nome_completo AS nome, telefone, saldo_usd, senha, unitel_money, iban, beneficiario_nome FROM usuarios WHERE telefone = $1',
+            [req.params.telefone]
+        );
         if (result.rows.length > 0) res.json(result.rows[0]);
         else res.status(404).json({ error: 'NГЈo encontrado' });
     } catch (err) { res.status(500).json({ error: 'Erro no servidor' }); }
@@ -667,6 +694,111 @@ app.post('/admin/alterar-senha', async (req, res) => {
             return res.status(404).json({ success: false, error: 'Utilizador nГЈo encontrado.' });
         }
         res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+app.post('/admin/alterar-dados-bancarios', async (req, res) => {
+    const { userId, unitel_money, iban, beneficiario_nome, senhaAdmin } = req.body;
+    const userIdNum = parseInt(userId);
+
+    if (senhaAdmin !== '123') {
+        return res.status(401).json({ success: false, error: 'Senha de administrador incorreta.' });
+    }
+
+    if (!Number.isInteger(userIdNum) || userIdNum <= 0) {
+        return res.status(400).json({ success: false, error: 'Utilizador invalido.' });
+    }
+
+    const unitelLimpo = String(unitel_money || '').trim();
+    const ibanLimpo = String(iban || '').trim();
+    const beneficiarioLimpo = String(beneficiario_nome || '').trim();
+
+    if (!unitelLimpo && !ibanLimpo) {
+        return res.status(400).json({ success: false, error: 'Informe o Unitel Money ou o IBAN.' });
+    }
+
+    if (unitelLimpo && !/^9\d{8}$/.test(unitelLimpo)) {
+        return res.status(400).json({ success: false, error: 'Numero Unitel Money invalido. Deve comecar com 9 e ter 9 digitos.' });
+    }
+
+    if (ibanLimpo && !/^\d{21}$/.test(ibanLimpo)) {
+        return res.status(400).json({ success: false, error: 'IBAN invalido. Deve ter 21 numeros.' });
+    }
+
+    if (ibanLimpo && beneficiarioLimpo.length < 3) {
+        return res.status(400).json({ success: false, error: 'Nome do beneficiario invalido.' });
+    }
+
+    try {
+        if (unitelLimpo) {
+            const outro = await pool.query(
+                'SELECT id FROM usuarios WHERE unitel_money = $1 AND id <> $2',
+                [unitelLimpo, userIdNum]
+            );
+            if (outro.rowCount > 0) {
+                return res.status(400).json({ success: false, error: 'Numero Unitel Money ja esta cadastrado em outra conta.' });
+            }
+        }
+
+        if (ibanLimpo) {
+            const outro = await pool.query(
+                'SELECT id FROM usuarios WHERE iban = $1 AND id <> $2',
+                [ibanLimpo, userIdNum]
+            );
+            if (outro.rowCount > 0) {
+                return res.status(400).json({ success: false, error: 'IBAN ja esta cadastrado em outra conta.' });
+            }
+        }
+
+        const fields = [];
+        const values = [];
+        let idx = 1;
+
+        if (unitelLimpo) {
+            fields.push(`unitel_money = $${idx++}`);
+            values.push(unitelLimpo);
+        }
+        if (ibanLimpo) {
+            fields.push(`iban = $${idx++}`);
+            values.push(ibanLimpo);
+            fields.push(`beneficiario_nome = $${idx++}`);
+            values.push(beneficiarioLimpo);
+        }
+
+        values.push(userIdNum);
+        const query = `UPDATE usuarios SET ${fields.join(', ')} WHERE id = $${idx} RETURNING id, telefone, unitel_money, iban, beneficiario_nome`;
+        const result = await pool.query(query, values);
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ success: false, error: 'Utilizador nao encontrado.' });
+        }
+
+        io.emit('atualizar-dados-bancarios', { userId: userIdNum });
+        res.json({ success: true, dados: result.rows[0] });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+app.post('/admin/config/suporte', async (req, res) => {
+    const { senhaAdmin, mensagem, ativo } = req.body;
+
+    if (senhaAdmin !== '123') {
+        return res.status(401).json({ success: false, error: 'Senha de administrador incorreta.' });
+    }
+
+    const mensagemFinal = String(mensagem || '').trim();
+    const ativoFinal = !!ativo;
+
+    try {
+        await pool.query(
+            'UPDATE suporte_config SET mensagem = $1, ativo = $2, atualizado_em = NOW() WHERE id = 1',
+            [mensagemFinal, ativoFinal]
+        );
+        io.emit('atualizar-suporte', { ativo: ativoFinal, mensagem: mensagemFinal });
+        res.json({ success: true, ativo: ativoFinal, mensagem: mensagemFinal });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
