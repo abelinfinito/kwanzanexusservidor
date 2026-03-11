@@ -736,7 +736,7 @@ app.post('/admin/alterar-dados-bancarios', async (req, res) => {
     }
 
     if (unitelLimpo && !/^9\d{8}$/.test(unitelLimpo)) {
-        return res.status(400).json({ success: false, error: 'Numero Unitel Money invalido. Deve comecar com 9 e ter 9 digitos.' });
+        return res.status(400).json({ success: false, error: 'Numero Unitel Money invalido. Deve ter 9 digitos.' });
     }
 
     if (ibanLimpo && !/^\d{21}$/.test(ibanLimpo)) {
@@ -1374,6 +1374,7 @@ const PORTA = process.env.PORT || 3000;
 server.listen(PORTA, '0.0.0.0', () => {
     console.log(`рџљЂ API KWANZA NEXUS na Render ativa!`);
 });
+
 
 
 
