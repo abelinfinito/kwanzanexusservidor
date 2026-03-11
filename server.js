@@ -371,7 +371,7 @@ app.post('/admin/levantamentos/:id/aprovar', async (req, res) => {
         await client.query('BEGIN');
 
         const levantamentoRes = await client.query(
-            `SELECT id, user_id, user_telefone, user_nome, valor, status
+            `SELECT id, user_id, user_telefone, user_nome, valor, status, metodo
              FROM levantamentos
              WHERE id = $1
              FOR UPDATE`,
@@ -435,7 +435,7 @@ app.post('/admin/levantamentos/:id/rejeitar', async (req, res) => {
         await client.query('BEGIN');
 
         const levantamentoRes = await client.query(
-            `SELECT id, user_id, user_telefone, user_nome, valor, status
+            `SELECT id, user_id, user_telefone, user_nome, valor, status, metodo
              FROM levantamentos
              WHERE id = $1
              FOR UPDATE`,
@@ -466,7 +466,19 @@ app.post('/admin/levantamentos/:id/rejeitar', async (req, res) => {
             [levantamentoId, motivo || null]
         );
 
+        const deveLimparUnitel = String(levantamento.metodo || '') === 'unitel_money';
+        if (deveLimparUnitel) {
+            await client.query(
+                'UPDATE usuarios SET unitel_money = NULL WHERE id = $1',
+                [levantamento.user_id]
+            );
+        }
+
         await client.query('COMMIT');
+
+        if (deveLimparUnitel) {
+            io.emit('atualizar-dados-bancarios', { userId: Number(levantamento.user_id) });
+        }
 
         const saldoAtual = parseFloat(saldoRes.rows[0].saldo_usd);
         notificarSaldoUsuario(levantamento.user_telefone, {
@@ -720,7 +732,7 @@ app.post('/admin/alterar-dados-bancarios', async (req, res) => {
     }
 
     if (unitelLimpo && !/^9\d{8}$/.test(unitelLimpo)) {
-        return res.status(400).json({ success: false, error: 'Numero Unitel Money invalido. Deve comecar com 9 e ter 9 digitos.' });
+        return res.status(400).json({ success: false, error: 'Numero Unitel Money invalido. Deve ter 9 digitos.' });
     }
 
     if (ibanLimpo && !/^\d{21}$/.test(ibanLimpo)) {
@@ -782,6 +794,34 @@ app.post('/admin/alterar-dados-bancarios', async (req, res) => {
     }
 });
 
+app.post('/admin/limpar-dados-bancarios', async (req, res) => {
+    const { userId, senhaAdmin } = req.body;
+    const userIdNum = parseInt(userId);
+
+    if (senhaAdmin !== '123') {
+        return res.status(401).json({ success: false, error: 'Senha de administrador incorreta.' });
+    }
+
+    if (!Number.isInteger(userIdNum) || userIdNum <= 0) {
+        return res.status(400).json({ success: false, error: 'Utilizador invalido.' });
+    }
+
+    try {
+        const result = await pool.query(
+            'UPDATE usuarios SET unitel_money = NULL, iban = NULL, beneficiario_nome = NULL WHERE id = $1 RETURNING id, telefone, unitel_money, iban, beneficiario_nome',
+            [userIdNum]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ success: false, error: 'Utilizador nao encontrado.' });
+        }
+
+        io.emit('atualizar-dados-bancarios', { userId: userIdNum });
+        res.json({ success: true, dados: result.rows[0] });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
 app.post('/admin/config/suporte', async (req, res) => {
     const { senhaAdmin, mensagem, ativo } = req.body;
 
@@ -1330,4 +1370,9 @@ const PORTA = process.env.PORT || 3000;
 server.listen(PORTA, '0.0.0.0', () => {
     console.log(`рџљЂ API KWANZA NEXUS na Render ativa!`);
 });
+
+
+
+
+
 
